@@ -1,12 +1,11 @@
-# 项目简介
-本固件适配斐讯 N1 旁路由模式，追求轻量，不具备 PPPoE、WiFi 相关功能。<br>
-固件仅包含默认皮肤以及下列 luci-app：<br>
-[luci-app-amlogic](https://github.com/ophub/luci-app-amlogic)：系统更新、文件传输、CPU 调频等<br>
-[luci-app-dae](https://github.com/daeuniverse/openwrt-packages)：基于eBPF分流的代理工具。内存占用稍大、上手门槛较高，换来的是直连流量处理性能大幅强于传统的各类用户态代理工具(OpenClash、SSRplus、Passwall等)。<br>
-[luci-app-passwall](https://github.com/Openwrt-Passwall/openwrt-passwall)：传统代理工具。内存占用稍低、简单易用。<br>
-[luci-app-podman](https://github.com/Zerogiven-OpenWRT-Packages/luci-app-podman)：容器管理<br>
-luci-app-samba4：存储共享
-***
-# 致谢
-本项目基于 [ImmortalWrt-25.12](https://github.com/immortalwrt/immortalwrt/tree/openwrt-25.12) 源码编译，使用 ophub 的[脚本](https://github.com/ophub/amlogic-s9xxx-openwrt)和 flippy 的[内核](https://github.com/ophub/kernel/releases/tag/kernel_flippy)打包成完整固件，感谢开发者们的无私分享。<br>
-flippy 固件的更多细节参考[恩山论坛帖子](https://www.right.com.cn/forum/thread-4076037-1-1.html)。
+# 斐讯 N1 旁路由固件
+
+基于 ImmortalWrt 25.12 和 Flippy 6.12.116 内核构建。默认管理地址为 **192.168.123.99/24**，上游网关和 DNS 为 **192.168.123.11**。首次使用建议全新刷写；将 N1 与上游路由连接到同一局域网。客户端需自行将网关指向 N1 才会经过旁路由；请确保地址未被占用。
+
+默认关闭 LAN 的 DHCP、IPv6 DHCP 和路由通告，由主路由管理地址分配。IPv6 客户端、网关和前缀取决于上游网络；如需 IPv6 流量经过旁路由，还需在主路由或客户端上配置相应的 IPv6 路由，不能仅依靠 IPv4 网关设置。
+
+内置 luci-app-honk（含 Honk 核心和 Doona）、Docker 与 luci-app-dockerman、Argon 主题及配置、luci-app-amlogic、Samba。Honk 首次使用前需在 `/etc/honk/config.d/node.dae` 配置节点和订阅。
+
+构建会检查 Flippy 内核的 `BPF_EVENTS`、`DEBUG_INFO_BTF`、`XDP_SOCKETS` 和 OpenWrt 的 `vmlinux-btf-builtin` 配置。该包是依赖占位包，BTF 由实际运行内核提供；刷机后可检查 `/sys/kernel/btf/vmlinux`、`/proc/config.gz` 并实测 Honk 和 Docker。第三方内核与 OpenWrt 软件包的内核模块兼容性仍需在设备上验证。
+
+固件由 GitHub Actions 手动或定期构建，产物发布到 Releases。项目基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)、[Honk](https://github.com/QiuSimons/luci-app-honk) 和 [ophub 打包脚本](https://github.com/ophub/amlogic-s9xxx-openwrt)。

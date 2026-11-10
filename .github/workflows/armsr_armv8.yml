@@ -13,6 +13,8 @@ env:
 
 jobs:
   build:
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
 
     steps:
@@ -44,6 +46,33 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Install Honk build toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y clang llvm libbpf-dev cmake libclang-dev zstd pkg-config
+          eval "$(openwrt/package/custom/honk/honk_toolchain.sh)"
+          curl -fsSL -o /tmp/bpf-linker.tar.zst "https://github.com/aya-rs/bpf-linker/releases/download/v${BPF_LINKER_VERSION}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+          echo "${BPF_LINKER_SHA256}  /tmp/bpf-linker.tar.zst" | sha256sum -c -
+          sudo tar --zstd -xf /tmp/bpf-linker.tar.zst -C /usr/local/bin
+          curl -fsSL -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          sudo tar -xJf /tmp/zig.tar.xz -C /usr/local
+          sudo ln -sf "/usr/local/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          command -v rustup >/dev/null || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Check packaged Flippy kernel configuration
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/n1-kernel
+          gh release download kernel_flippy -R ophub/kernel -p '6.12.116.tar.gz' -D /tmp/n1-kernel
+          tar -xzf /tmp/n1-kernel/6.12.116.tar.gz -C /tmp/n1-kernel --wildcards '*/boot-*.tar.gz'
+          boot=$(find /tmp/n1-kernel -name 'boot-*.tar.gz' -print -quit)
+          config=$(tar -tzf "$boot" | grep '^config-' | head -n1)
+          tar -xOzf "$boot" "$config" > /tmp/n1-kernel/config
+          for option in BPF_EVENTS DEBUG_INFO_BTF XDP_SOCKETS; do
+            grep -qx "CONFIG_${option}=y" /tmp/n1-kernel/config || { echo "Missing CONFIG_${option}=y"; exit 1; }
+          done
+
       - name: Load N1 custom config
         run: |
           rm -rf openwrt/files openwrt/.config
@@ -54,6 +83,9 @@ jobs:
         working-directory: ./openwrt
         run: |
           make defconfig
+          for option in CONFIG_PACKAGE_luci-app-honk CONFIG_PACKAGE_honk CONFIG_PACKAGE_luci-app-dockerman CONFIG_PACKAGE_luci-theme-argon CONFIG_PACKAGE_luci-app-argon-config CONFIG_PACKAGE_vmlinux-btf-builtin CONFIG_KERNEL_BPF_EVENTS CONFIG_KERNEL_DEBUG_INFO_BTF CONFIG_KERNEL_XDP_SOCKETS; do
+            grep -qx "${option}=y" .config || { echo "Missing ${option}=y after defconfig"; exit 1; }
+          done
           make download -j$(( $(nproc) * 2 ))
 
       - name: Compile N1 firmware
@@ -67,16 +99,14 @@ jobs:
           openwrt_path: openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
           openwrt_board: s905d
           kernel_usage: flippy
-          openwrt_kernel: 6.12.y
+          openwrt_kernel: 6.12.116
+          auto_kernel: false
+          openwrt_ip: 192.168.123.99
           openwrt_size: 256/1024
           builder_name: nantayo
 
       - name: Upload firmware to release
         run: |
-          tag="OpenWrt_${{ env.FILE_DATE }}"
-          gh release create $tag --repo ${{ github.repository }} --title "$tag" --notes "$(printf '首次使用建议全新刷写\n* 基本信息\nIP: 192.168.2.2\n账户: root\n密码: password')" 2> /dev/null || true
-          gh release upload $tag ${{ env.PACKAGED_OUTPUTPATH }}/*.img.gz --repo ${{ github.repository }} --clobber
-
-      - name: Delete old releases
-        run: |
-          gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName' | tail -n +3 | while read -r tag; do gh release delete "$tag" --repo ${{ github.repository }} --cleanup-tag --yes; done
+          tag="OpenWrt_${{ env.FILE_DATE }}_${{ github.run_number }}"
+          gh release create $tag --repo ${{ github.repository }} --title "$tag" --notes "$(printf '首次使用建议全新刷写\n* 基本信息\nIP: 192.168.123.99\n账户: root\n密码: password')"
+          gh release upload $tag ${{ env.PACKAGED_OUTPUTPATH }}/*.img.gz --repo ${{ github.repository }}

@@ -1,0 +1,15 @@
+config dnsmasq
+	option domainneeded '1'
+	option boguspriv '1'
+	option localservice '1'
+
+config dhcp 'lan'
+	option interface 'lan'
+	option ignore '1'
+	option ra 'disabled'
+	option dhcpv6 'disabled'
+
+config odhcpd 'odhcpd'
+	option maindhcp '0'
+	option leasefile '/tmp/hosts/odhcpd'
+	option leasetrigger '/usr/sbin/odhcpd-update'
