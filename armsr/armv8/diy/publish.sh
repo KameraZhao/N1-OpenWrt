@@ -30,9 +30,11 @@ for package in "${packages[@]}"; do
 	cp "${matches[0]}" "$apk_file"
 	apks+=("$apk_file")
 done
-# apk 3.0.5 adbsign does not load the old trust directory before reading.
-"$apk" --keys-dir "$openwrt" verify "${apks[@]}"
-"$apk" --allow-untrusted --sign "$key" adbsign --reset-signatures "${apks[@]}"
+# OpenWrt build output APKs use the build index for integrity. Sign these local
+# build outputs for download and use one adbsign invocation per APK on 3.0.5.
+for apk_file in "${apks[@]}"; do
+	"$apk" --allow-untrusted --sign "$key" adbsign --reset-signatures "$apk_file"
+done
 "$apk" --keys-dir "$working/keys" verify "${apks[@]}"
 
 # Each index points at complete, versioned release assets. Only the small index
