@@ -9,7 +9,7 @@ tag="OpenWrt_$(date +%Y%m%d)_${GITHUB_RUN_NUMBER}_${GITHUB_RUN_ATTEMPT}"
 
 working=$(mktemp -d)
 trap 'rm -rf "$working"' EXIT
-mkdir "$working/assets" "$working/keys" "$working/downloaded"
+mkdir "$working/assets" "$working/keys"
 public_key="$openwrt/files/etc/apk/keys/n1-honk.pem"
 cp "$public_key" "$working/keys/"
 key="$working/key.pem"
@@ -39,15 +39,6 @@ done
 "$apk" --keys-dir "$working/keys" adbdump --format json "$working/assets/luci-i18n-honk-zh-cn.apk" |
 	jq -e '.info.version != null and .info.version != "0"' >/dev/null
 
-# Each index points at complete, versioned release assets. Only the small index
-# is kept on the honk-feed branch.
-download_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
-index="$working/packages.adb"
-"$apk" --keys-dir "$working/keys" --sign "$key" mkndx --output "$index" \
-	--pkgname-spec "$download_url/"'${name}.apk' "${apks[@]}"
-rm -f "$key"
-"$apk" --keys-dir "$working/keys" verify "$index"
-
 cat > "$working/release-notes" <<NOTES
 ImmortalWrt ${IMMORTAL_VERSION} · Flippy ${FLIPPY_KERNEL} · ${HONK_TAG}
 
@@ -61,26 +52,4 @@ NOTES
 gh release create "$tag" "$output"/*.img.gz "$repair" "${apks[@]}" \
 	--target "$GITHUB_SHA" --title "$tag" --notes-file "$working/release-notes" --repo "$GITHUB_REPOSITORY"
 
-printf '%s\n' "$index" > "$working/repositories.list"
-"$apk" --arch aarch64_generic --keys-dir "$working/keys" --no-cache \
-	--repositories-file "$working/repositories.list" fetch --output "$working/downloaded" "${packages[@]}"
-"$apk" --keys-dir "$working/keys" verify "$working/downloaded/"*.apk
-
-feed="$working/feed"
-git init -q "$feed"
-git -C "$feed" remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
-if git -C "$feed" ls-remote --exit-code origin refs/heads/honk-feed >/dev/null; then
-	git -C "$feed" fetch --depth=1 origin refs/heads/honk-feed
-	git -C "$feed" switch -c honk-feed FETCH_HEAD
-elif [[ $? == 2 ]]; then
-	git -C "$feed" switch --orphan honk-feed
-else
-	exit 1
-fi
-mkdir -p "$feed/aarch64_generic"
-cp "$index" "$feed/aarch64_generic/packages.adb"
-git -C "$feed" add aarch64_generic/packages.adb
-git -C "$feed" -c user.name=github-actions -c 'user.email=41898282+github-actions[bot]@users.noreply.github.com' \
-	commit -qm "Publish Honk APK index for $tag"
-git -C "$feed" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-	push origin HEAD:refs/heads/honk-feed
+bash "$(dirname "$0")/publish-honk-feed.sh" "$apk" "$working/assets" "$key" "$tag"

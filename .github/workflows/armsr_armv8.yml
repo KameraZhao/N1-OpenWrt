@@ -2,6 +2,11 @@ name: Build ImmortalWrt-25.12 for armsr_armv8
 
 on:
   workflow_dispatch:
+    inputs:
+      honk_release:
+        description: "Refresh only the Honk feed from a release with signed APKs"
+        type: string
+        required: false
   schedule:
     # Wednesday and Saturday at 04:23 in Shanghai.
     - cron: "23 20 * * 2,5"
@@ -21,6 +26,7 @@ env:
 
 jobs:
   build:
+    if: ${{ !inputs.honk_release }}
     permissions:
       contents: write
     runs-on: ubuntu-24.04
@@ -153,3 +159,43 @@ jobs:
           HONK_APK_SIGNING_KEY: ${{ secrets.HONK_APK_SIGNING_KEY }}
         run: |
           bash armsr/armv8/diy/publish.sh openwrt "$PACKAGED_OUTPUTPATH" "$RUNNER_TEMP/repair-apk-sources.sh"
+
+  refresh-honk-feed:
+    if: ${{ inputs.honk_release }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Build the APK tool used by ImmortalWrt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends meson ninja-build libssl-dev zlib1g-dev
+          git init -q "$RUNNER_TEMP/apk-tools"
+          git -C "$RUNNER_TEMP/apk-tools" fetch --depth=1 https://github.com/alpinelinux/apk-tools.git \
+            b5a31c0d865342ad80be10d68f1bb3d3ad9b0866
+          git -C "$RUNNER_TEMP/apk-tools" checkout --detach FETCH_HEAD
+          meson setup "$RUNNER_TEMP/apk-build" "$RUNNER_TEMP/apk-tools" \
+            -Ddefault_library=static -Durl_backend=wget -Dzstd=disabled -Dhelp=disabled \
+            -Ddocs=disabled -Dlua=disabled -Dpython=disabled -Dtests=disabled
+          meson compile -C "$RUNNER_TEMP/apk-build"
+
+      - name: Verify existing APKs and refresh the Honk index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HONK_APK_SIGNING_KEY: ${{ secrets.HONK_APK_SIGNING_KEY }}
+          HONK_RELEASE: ${{ inputs.honk_release }}
+        run: |
+          [[ "$HONK_RELEASE" =~ ^(OpenWrt_[0-9]{8}_[0-9]+(_[0-9]+)?|Honk_[0-9]{8}_[0-9a-f]+)$ ]]
+          assets="$RUNNER_TEMP/honk-assets"
+          gh release download "$HONK_RELEASE" --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir "$assets"
+          key=$(mktemp)
+          trap 'rm "$key"' EXIT
+          printf '%s\n' "${HONK_APK_SIGNING_KEY:?Configure the Honk APK signing secret}" > "$key"
+          unset HONK_APK_SIGNING_KEY
+          bash armsr/armv8/diy/publish-honk-feed.sh "$RUNNER_TEMP/apk-build/src/apk" "$assets" "$key" "$HONK_RELEASE"
