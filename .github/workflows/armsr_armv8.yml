@@ -80,7 +80,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get install -y clang llvm libbpf-dev cmake libclang-dev zstd pkg-config
-          eval "$(openwrt/package/custom/honk/honk_toolchain.sh)"
+          eval "$(openwrt/package/custom/honk-upstream/honk/honk_toolchain.sh)"
           curl -fsSL -o /tmp/bpf-linker.tar.zst "https://github.com/aya-rs/bpf-linker/releases/download/v${BPF_LINKER_VERSION}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
           echo "${BPF_LINKER_SHA256}  /tmp/bpf-linker.tar.zst" | sha256sum -c -
           sudo tar --zstd -xf /tmp/bpf-linker.tar.zst -C /usr/local/bin

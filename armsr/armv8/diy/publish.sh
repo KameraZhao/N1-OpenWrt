@@ -36,6 +36,8 @@ for apk_file in "${apks[@]}"; do
 	"$apk" --allow-untrusted --sign "$key" adbsign --reset-signatures "$apk_file"
 done
 "$apk" --keys-dir "$working/keys" verify "${apks[@]}"
+"$apk" --keys-dir "$working/keys" adbdump --format json "$working/assets/luci-i18n-honk-zh-cn.apk" |
+	jq -e '.info.version != null and .info.version != "0"' >/dev/null
 
 # Each index points at complete, versioned release assets. Only the small index
 # is kept on the honk-feed branch.
