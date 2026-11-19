@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+
+# Intended for existing N1 images from this project.
+if [ "$(id -u)" != 0 ]; then
+	echo 'Run this script as root on the N1.' >&2
+	exit 1
+fi
+
+. /etc/openwrt_release
+case "$DISTRIB_ID:$DISTRIB_TARGET:$DISTRIB_ARCH:$DISTRIB_RELEASE" in
+	ImmortalWrt:armsr/armv8:aarch64_generic:25.12-SNAPSHOT|\
+	ImmortalWrt:armsr/armv8:aarch64_generic:@VERSION@) ;;
+	*) echo 'This migration is for the N1 25.12-SNAPSHOT or @VERSION@ image.' >&2; exit 1 ;;
+esac
+
+work=$(mktemp -d /etc/apk/.n1-feeds.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' HUP INT TERM
+mkdir "$work/keys"
+cp /etc/apk/keys/*.pem "$work/keys/"
+cat > "$work/keys/n1-honk.pem" <<'KEY'
+@PUBLIC_KEY@
+KEY
+
+if [ -e /etc/apk/keys/n1-honk.pem ] &&
+	! cmp -s /etc/apk/keys/n1-honk.pem "$work/keys/n1-honk.pem"; then
+	echo 'The installed Honk signing key differs. Verify the key before replacing it.' >&2
+	exit 1
+fi
+
+cat > "$work/distfeeds.list" <<'DISTFEEDS'
+@DISTFEEDS@
+DISTFEEDS
+cat > "$work/n1-honk.list" <<'HONK'
+@HONK_FEED@
+HONK
+cat "$work/distfeeds.list" "$work/n1-honk.list" > "$work/all.list"
+
+# Only change the active sources after both the official and Honk indexes load.
+apk --keys-dir "$work/keys" --repositories-file "$work/all.list" update
+
+backup=$(mktemp -d /etc/apk/n1-feeds-backup.XXXXXX)
+for file in distfeeds.list n1-honk.list; do
+	if [ -f "/etc/apk/repositories.d/$file" ]; then
+		cp -p "/etc/apk/repositories.d/$file" "$backup/"
+	fi
+done
+chmod 644 "$work/keys/n1-honk.pem" "$work/distfeeds.list" "$work/n1-honk.list"
+mv "$work/keys/n1-honk.pem" /etc/apk/keys/
+mv "$work/distfeeds.list" "$work/n1-honk.list" /etc/apk/repositories.d/
+echo "Sources configured. Previous lists saved in $backup."

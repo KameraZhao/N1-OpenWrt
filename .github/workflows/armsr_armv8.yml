@@ -3,12 +3,20 @@ name: Build ImmortalWrt-25.12 for armsr_armv8
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 1,16 * *"
+    # Wednesday and Saturday at 04:23 in Shanghai.
+    - cron: "23 20 * * 2,5"
+
+concurrency:
+  group: n1-firmware
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 env:
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-25.12
+  FLIPPY_KERNEL: "6.12.116"
   TZ: Asia/Shanghai
 
 jobs:
@@ -19,7 +27,29 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Resolve released ImmortalWrt and Honk versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          versions=$(git ls-remote --tags --refs "$REPO_URL" 'v25.12.*' |
+            sed -n 's,.*refs/tags/v\(25\.12\.[0-9]\+\)$,\1,p' | sort -Vr)
+          version=
+          for candidate in $versions; do
+            if curl --silent --fail --location --connect-timeout 10 --max-time 30 --retry 2 \
+              "https://downloads.immortalwrt.org/releases/$candidate/targets/armsr/armv8/version.buildinfo"; then
+              version="$candidate"
+              break
+            fi
+          done
+          test -n "$version"
+          honk_tag=$(gh api repos/QiuSimons/luci-app-honk/releases/latest --jq .tag_name)
+          [[ $honk_tag =~ ^honk_[0-9]{4}\.[0-9]{2}\.[0-9]{2}_[0-9a-f]+-r[0-9]+$ ]]
+          printf 'IMMORTAL_VERSION=%s\nHONK_TAG=%s\n' "$version" "$honk_tag" >> "$GITHUB_ENV"
+          echo "Building ImmortalWrt $version with $honk_tag"
 
       - name: Initialize environment
         env:
@@ -34,16 +64,16 @@ jobs:
       - name: Clone source code
         working-directory: /workdir
         run: |
-          git clone $REPO_URL -b $REPO_BRANCH --single-branch --depth=1 openwrt
-          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-          echo "FILE_DATE=$(date +"%Y%m%d")" >> $GITHUB_ENV
+          git clone --branch "v$IMMORTAL_VERSION" --single-branch --depth=1 "$REPO_URL" openwrt
+          ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
 
       - name: Update & Install feeds
         working-directory: ./openwrt
         run: |
+          # This release series has no published video package index.
+          sed '/^src-git video /d' feeds.conf.default > feeds.conf
           ./scripts/feeds update -a
-          bash $GITHUB_WORKSPACE/armsr/armv8/diy/diy.sh
-          ./scripts/feeds update -a
+          bash "$GITHUB_WORKSPACE/armsr/armv8/diy/diy.sh" "$HONK_TAG"
           ./scripts/feeds install -a
 
       - name: Install Honk build toolchain
@@ -61,29 +91,36 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Check packaged Flippy kernel configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/n1-kernel
-          gh release download kernel_flippy -R ophub/kernel -p '6.12.116.tar.gz' -D /tmp/n1-kernel
-          tar -xzf /tmp/n1-kernel/6.12.116.tar.gz -C /tmp/n1-kernel --wildcards '*/boot-*.tar.gz'
+          gh release download kernel_flippy -R ophub/kernel -p "$FLIPPY_KERNEL.tar.gz" -D /tmp/n1-kernel
+          tar -xzf "/tmp/n1-kernel/$FLIPPY_KERNEL.tar.gz" -C /tmp/n1-kernel --wildcards '*/boot-*.tar.gz'
           boot=$(find /tmp/n1-kernel -name 'boot-*.tar.gz' -print -quit)
-          config=$(tar -tzf "$boot" | grep '^config-' | head -n1)
+          config=$(tar -tzf "$boot" | grep '^config-')
           tar -xOzf "$boot" "$config" > /tmp/n1-kernel/config
-          for option in BPF_EVENTS DEBUG_INFO_BTF XDP_SOCKETS; do
+          for option in BPF_SYSCALL BPF_EVENTS DEBUG_INFO_BTF XDP_SOCKETS IPV6; do
             grep -qx "CONFIG_${option}=y" /tmp/n1-kernel/config || { echo "Missing CONFIG_${option}=y"; exit 1; }
           done
 
       - name: Load N1 custom config
         run: |
-          rm -rf openwrt/files openwrt/.config
-          mv armsr/armv8/N1/files armsr/armv8/N1/.config openwrt/
-          chmod -R 755 openwrt
+          cp -a armsr/armv8/N1/files armsr/armv8/N1/.config openwrt/
+          bash armsr/armv8/diy/configure-apk-feeds.sh "$IMMORTAL_VERSION" armsr/armv8/N1 \
+            openwrt/files "$RUNNER_TEMP/repair-apk-sources.sh"
 
       - name: Download package
         working-directory: ./openwrt
         run: |
           make defconfig
-          for option in CONFIG_PACKAGE_luci-app-honk CONFIG_PACKAGE_honk CONFIG_PACKAGE_luci-app-dockerman CONFIG_PACKAGE_luci-theme-argon CONFIG_PACKAGE_luci-app-argon-config CONFIG_PACKAGE_vmlinux-btf-builtin CONFIG_KERNEL_BPF_EVENTS CONFIG_KERNEL_DEBUG_INFO_BTF CONFIG_KERNEL_XDP_SOCKETS; do
+          for option in CONFIG_SIGNED_PACKAGES CONFIG_PACKAGE_luci-app-package-manager \
+            CONFIG_PACKAGE_openwrt-keyring CONFIG_PACKAGE_luci-app-honk CONFIG_PACKAGE_honk \
+            CONFIG_PACKAGE_luci-i18n-honk-zh-cn CONFIG_PACKAGE_luci-app-dockerman \
+            CONFIG_PACKAGE_luci-theme-argon CONFIG_PACKAGE_luci-app-argon-config \
+            CONFIG_PACKAGE_vmlinux-btf-builtin CONFIG_HONK_USE_KERNEL_BTF CONFIG_KERNEL_BPF_EVENTS \
+            CONFIG_KERNEL_DEBUG_INFO_BTF CONFIG_KERNEL_XDP_SOCKETS; do
             grep -qx "${option}=y" .config || { echo "Missing ${option}=y after defconfig"; exit 1; }
           done
           make download -j$(( $(nproc) * 2 ))
@@ -94,19 +131,25 @@ jobs:
           make -j$(( $(nproc) + 1 )) || make -j1 V=s
 
       - name: Package N1 firmware
-        uses: ophub/amlogic-s9xxx-openwrt@main
+        uses: ophub/amlogic-s9xxx-openwrt@9057493370ee44fffee6a304cbb9e43a2e781a54
         with:
           openwrt_path: openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
           openwrt_board: s905d
           kernel_usage: flippy
-          openwrt_kernel: 6.12.116
+          openwrt_kernel: ${{ env.FLIPPY_KERNEL }}
           auto_kernel: false
           openwrt_ip: 192.168.123.99
           openwrt_size: 256/1024
           builder_name: nantayo
 
-      - name: Upload firmware to release
+      - name: Verify final image and install an APK from the official feed
         run: |
-          tag="OpenWrt_${{ env.FILE_DATE }}_${{ github.run_number }}"
-          gh release create $tag --repo ${{ github.repository }} --title "$tag" --notes "$(printf '首次使用建议全新刷写\n* 基本信息\nIP: 192.168.123.99\n账户: root\n密码: password')"
-          gh release upload $tag ${{ env.PACKAGED_OUTPUTPATH }}/*.img.gz --repo ${{ github.repository }}
+          bash armsr/armv8/diy/check-image.sh "$PACKAGED_OUTPUTPATH"/*.img.gz \
+            openwrt/files "$GITHUB_WORKSPACE/openwrt/staging_dir/host/bin/apk"
+
+      - name: Publish firmware and signed Honk updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HONK_APK_SIGNING_KEY: ${{ secrets.HONK_APK_SIGNING_KEY }}
+        run: |
+          bash armsr/armv8/diy/publish.sh openwrt "$PACKAGED_OUTPUTPATH" "$RUNNER_TEMP/repair-apk-sources.sh"
