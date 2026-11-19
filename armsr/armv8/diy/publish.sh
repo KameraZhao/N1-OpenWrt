@@ -30,7 +30,9 @@ for package in "${packages[@]}"; do
 	cp "${matches[0]}" "$apk_file"
 	apks+=("$apk_file")
 done
-"$apk" --keys-dir "$openwrt" --sign "$key" adbsign --reset-signatures "${apks[@]}"
+# apk 3.0.5 adbsign does not load the old trust directory before reading.
+"$apk" --keys-dir "$openwrt" verify "${apks[@]}"
+"$apk" --allow-untrusted --sign "$key" adbsign --reset-signatures "${apks[@]}"
 "$apk" --keys-dir "$working/keys" verify "${apks[@]}"
 
 # Each index points at complete, versioned release assets. Only the small index
@@ -74,7 +76,7 @@ fi
 mkdir -p "$feed/aarch64_generic"
 cp "$index" "$feed/aarch64_generic/packages.adb"
 git -C "$feed" add aarch64_generic/packages.adb
-git -C "$feed" -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+git -C "$feed" -c user.name=github-actions -c 'user.email=41898282+github-actions[bot]@users.noreply.github.com' \
 	commit -qm "Publish Honk APK index for $tag"
 git -C "$feed" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
 	push origin HEAD:refs/heads/honk-feed
