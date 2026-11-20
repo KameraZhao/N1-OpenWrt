@@ -122,7 +122,7 @@ jobs:
         run: |
           make defconfig
           for option in CONFIG_SIGNED_PACKAGES CONFIG_PACKAGE_luci-app-package-manager \
-            CONFIG_PACKAGE_openwrt-keyring CONFIG_PACKAGE_luci-app-honk CONFIG_PACKAGE_honk \
+            CONFIG_PACKAGE_openwrt-keyring CONFIG_PACKAGE_wget-ssl CONFIG_PACKAGE_luci-app-honk CONFIG_PACKAGE_honk \
             CONFIG_PACKAGE_luci-i18n-honk-zh-cn CONFIG_PACKAGE_luci-app-dockerman \
             CONFIG_PACKAGE_luci-theme-argon CONFIG_PACKAGE_luci-app-argon-config \
             CONFIG_PACKAGE_vmlinux-btf-builtin CONFIG_HONK_USE_KERNEL_BTF CONFIG_KERNEL_BPF_EVENTS \

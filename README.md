@@ -19,6 +19,8 @@ apk upgrade honk luci-app-honk luci-i18n-honk-zh-cn
 
 如果 Honk 已在运行，更新后在 LuCI 中重启 Honk 服务。节点和分流配置保存在 `/etc/honk/`。
 
+新版构建内置 GNU Wget（`wget-ssl`）供 APK 下载。旧版如果在下载软件包时出现 `wgetSSL error` 或 `unexpected end of file`，可先从官方软件源运行 `apk add wget-ssl`，再刷新列表重试。确认下载中断时，`--force-overwrite` 不会修复 HTTPS 连接。
+
 已经安装本项目旧版 `25.12-SNAPSHOT` 的设备，可将 Releases 中的 `repair-apk-sources.sh` 上传到 N1 后，以 root 身份运行 `sh /tmp/repair-apk-sources.sh`。脚本验证索引签名后才切换软件源，并备份原列表。更新 Honk 和修复软件源均可在原系统完成。
 
 软件源包含与 ImmortalWrt 25.12 稳定版对应的应用包和本仓库签名的 Honk 包。Flippy 内核使用自身的模块；ImmortalWrt 官方 kmod 的内核 ABI 与它不同。
